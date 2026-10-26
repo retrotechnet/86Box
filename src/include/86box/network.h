@@ -238,6 +238,7 @@ extern const device_t ne2000_device;
 extern const device_t ne2000_compat_device;
 extern const device_t ne2000_compat_8bit_device;
 extern const device_t ethernext_mc_device;
+extern const device_t ibm_psvp_eth_device;
 extern const device_t rtl8019as_pnp_device;
 extern const device_t de220p_device;
 extern const device_t rtl8029as_device;

@@ -129,6 +129,18 @@ typedef struct nic_t {
     uint8_t    *pnp_csnsav;
 
     nmc93cxx_eeprom_t *eeprom;
+
+    /* IBM PS/ValuePoint: read-only 93C46 configuration EEPROM, bit-banged
+       through the ASIC register at base+0x1E. */
+    uint16_t    psvp_eeprom[64];
+    uint16_t    psvp_ee_cmd;
+    uint16_t    psvp_ee_data;
+    uint8_t     psvp_ee_addr;
+    uint8_t     psvp_ee_state;
+    uint8_t     psvp_ee_bits;
+    uint8_t     psvp_ee_cs;
+    uint8_t     psvp_ee_sk;
+    uint8_t     psvp_ee_do;
 } nic_t;
 
 #ifdef ENABLE_NE2K_LOG
@@ -223,6 +235,123 @@ nic_soft_reset(void *priv)
 }
 
 /*
+ * IBM PS/ValuePoint Ethernet configuration EEPROM.
+ *
+ * The board keeps its node address, I/O base and IRQ in a 93C46 (64 x 16)
+ * serial EEPROM. The ODI driver (F1ODISH.COM) bit-bangs it through the ASIC
+ * register at base+0x1E:
+ *   write: bit 3 = CS, bit 2 = SK, bit 1 = DI (bit 0 is always set)
+ *   read:  bit 0 = DO, bit 6 must read 0 (adapter ready)
+ * Only the READ command is needed, so this is a minimal read-only model.
+ */
+enum {
+    PSVP_EE_IDLE = 0,
+    PSVP_EE_CMD,
+    PSVP_EE_DATA,
+    PSVP_EE_IGNORE
+};
+
+static void
+psvp_eeprom_write(nic_t *dev, uint8_t val)
+{
+    uint8_t ee_cs = !!(val & 0x08);
+    uint8_t ee_sk = !!(val & 0x04);
+    uint8_t ee_di = !!(val & 0x02);
+
+    if (!ee_cs) {
+        dev->psvp_ee_state = PSVP_EE_IDLE;
+        dev->psvp_ee_do    = 1; /* DO floats high (ready) when deselected */
+    } else if (ee_sk && !dev->psvp_ee_sk) {
+        /* Rising edge of SK while selected. */
+        switch (dev->psvp_ee_state) {
+            case PSVP_EE_IDLE:
+                if (ee_di) { /* start bit */
+                    dev->psvp_ee_state = PSVP_EE_CMD;
+                    dev->psvp_ee_cmd   = 0;
+                    dev->psvp_ee_bits  = 0;
+                }
+                break;
+
+            case PSVP_EE_CMD:
+                dev->psvp_ee_cmd = (dev->psvp_ee_cmd << 1) | ee_di;
+                if (++dev->psvp_ee_bits == 8) {
+                    if ((dev->psvp_ee_cmd >> 6) == 0x02) { /* READ */
+                        dev->psvp_ee_addr  = dev->psvp_ee_cmd & 0x3f;
+                        dev->psvp_ee_data  = dev->psvp_eeprom[dev->psvp_ee_addr];
+                        dev->psvp_ee_bits  = 16;
+                        dev->psvp_ee_do    = 0; /* dummy zero bit */
+                        dev->psvp_ee_state = PSVP_EE_DATA;
+                    } else
+                        dev->psvp_ee_state = PSVP_EE_IGNORE;
+                }
+                break;
+
+            case PSVP_EE_DATA:
+                if (dev->psvp_ee_bits == 0) { /* sequential read */
+                    dev->psvp_ee_addr = (dev->psvp_ee_addr + 1) & 0x3f;
+                    dev->psvp_ee_data = dev->psvp_eeprom[dev->psvp_ee_addr];
+                    dev->psvp_ee_bits = 16;
+                }
+                dev->psvp_ee_bits--;
+                dev->psvp_ee_do = (dev->psvp_ee_data >> dev->psvp_ee_bits) & 1;
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    dev->psvp_ee_cs = ee_cs;
+    dev->psvp_ee_sk = ee_sk;
+}
+
+static uint8_t
+psvp_eeprom_read(nic_t *dev)
+{
+    return dev->psvp_ee_do ? 0x01 : 0x00;
+}
+
+static void
+psvp_eeprom_init(nic_t *dev)
+{
+    /* Index tables used by F1ODISH.COM v1.09. */
+    static const uint16_t io_map[4]  = { 0x300, 0x320, 0x340, 0x380 };
+    static const uint8_t  irq_map[7] = { 3, 4, 5, 9, 10, 11, 14 };
+    uint16_t *ee  = dev->psvp_eeprom;
+    uint8_t   sum = 0;
+    int       io  = 0;
+    int       irq = 2; /* IRQ 5 */
+
+    for (int i = 0; i < 4; i++)
+        if (io_map[i] == dev->base_address)
+            io = i;
+    for (int i = 0; i < 7; i++)
+        if (irq_map[i] == dev->base_irq)
+            irq = i;
+
+    memset(ee, 0xff, sizeof(dev->psvp_eeprom));
+
+    /* Words 0-2: node address, low byte first. Driver insists on 08:00:5A. */
+    ee[0] = dev->maclocal[0] | (dev->maclocal[1] << 8);
+    ee[1] = dev->maclocal[2] | (dev->maclocal[3] << 8);
+    ee[2] = dev->maclocal[4] | (dev->maclocal[5] << 8);
+    /* Word 3: bits 0-3 memory window index (4 = C800, unused for PIO),
+               bits 4-6 I/O base index, bits 12-13 connector (0). */
+    ee[3] = 0x0004 | (io << 4);
+    /* Word 4: bits 0-2 IRQ index + 1. */
+    ee[4] = irq + 1;
+    /* Word 5: signature 0x50 in the low byte, checksum in the high byte:
+       the bytes of words 0, 1, 2 and 5 must add up to 0xFF. */
+    for (int i = 0; i < 3; i++)
+        sum += (ee[i] & 0xff) + (ee[i] >> 8);
+    sum += 0x50;
+    ee[5] = 0x0050 | ((uint8_t) (0xff - sum) << 8);
+
+    dev->psvp_ee_state = PSVP_EE_IDLE;
+    dev->psvp_ee_do    = 1;
+}
+
+/*
  * Access the ASIC I/O space.
  *
  * This is the high 16 bytes of i/o space (the lower 16 bytes
@@ -287,6 +416,11 @@ asic_read(nic_t *dev, uint32_t off, unsigned int len)
             }
             break;
 
+        case 0x0e: /* IBM PS/ValuePoint EEPROM / command port */
+            if (dev->board == NE2K_IBM_PSVP)
+                retval = psvp_eeprom_read(dev);
+            break;
+
         case 0x0f: /* Reset register */
             nic_soft_reset(dev);
             break;
@@ -344,6 +478,11 @@ asic_write(nic_t *dev, uint32_t off, uint32_t val, unsigned len)
                 if (dev->dp8390->IMR.rdma_inte)
                     nic_interrupt(dev, 1);
             }
+            break;
+
+        case 0x0e: /* IBM PS/ValuePoint EEPROM / command port */
+            if (dev->board == NE2K_IBM_PSVP)
+                psvp_eeprom_write(dev, val & 0xff);
             break;
 
         case 0x0f: /* Reset register */
@@ -1204,6 +1343,16 @@ nic_init(const device_t *info)
             dp8390_mem_alloc(dev->dp8390, 0x4000, 0x4000);
             break;
 
+        case NE2K_IBM_PSVP:
+            dev->maclocal[0] = 0x08; /* 08:00:5A (IBM OID), required by the driver */
+            dev->maclocal[1] = 0x00;
+            dev->maclocal[2] = 0x5A;
+            rom              = NULL;
+            dp8390_set_defaults(dev->dp8390, DP8390_FLAG_EVEN_MAC | DP8390_FLAG_CHECK_CR | DP8390_FLAG_CLEAR_IRQ);
+            dp8390_mem_alloc(dev->dp8390, 0x4000, 0x4000);
+            psvp_eeprom_init(dev);
+            break;
+
         case NE2K_DE220P:
             dev->maclocal[0] = 0x00; /* 00:80:C8 (D-Link OID) */
             dev->maclocal[1] = 0x80;
@@ -1971,6 +2120,60 @@ const device_t ne2000_compat_device = {
     .config        = ne2000_compat_config
 };
 
+static const device_config_t ibm_psvp_eth_config[] = {
+    {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x300,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            /* The driver auto-scans 0x300 and 0x320 only; 0x340 and 0x380
+               need "PORT 340" / "PORT 380" in NET.CFG. */
+            { .description = "0x300", .value = 0x300 },
+            { .description = "0x320", .value = 0x320 },
+            { .description = "0x340", .value = 0x340 },
+            { .description = "0x380", .value = 0x380 },
+            { .description = ""                      }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 5,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "IRQ 3",  .value =  3 },
+            { .description = "IRQ 4",  .value =  4 },
+            { .description = "IRQ 5",  .value =  5 },
+            { .description = "IRQ 9",  .value =  9 },
+            { .description = "IRQ 10", .value = 10 },
+            { .description = "IRQ 11", .value = 11 },
+            { .description = "IRQ 14", .value = 14 },
+            { .description = ""                    }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "mac",
+        .description    = "MAC Address",
+        .type           = CONFIG_MAC,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
+
 const device_t ne2000_compat_8bit_device = {
     .name          = "NE2000 Compatible 8-bit",
     .internal_name = "ne2k8",
@@ -1997,6 +2200,20 @@ const device_t ethernext_mc_device = {
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = mca_mac_config
+};
+
+const device_t ibm_psvp_eth_device = {
+    .name          = "IBM PS/ValuePoint ISA Ethernet Adapter",
+    .internal_name = "ibm_psvp_eth",
+    .flags         = DEVICE_ISA16,
+    .local         = NE2K_IBM_PSVP,
+    .init          = nic_init,
+    .close         = nic_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ibm_psvp_eth_config
 };
 
 const device_t rtl8019as_pnp_device = {

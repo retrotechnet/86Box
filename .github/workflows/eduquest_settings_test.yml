@@ -42,9 +42,10 @@ jobs:
           done
           # Placeholder files for every ROM path in the source, so every machine
           # is "available" like with a full ROM set.
-          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | while read -r f; do
-            mkdir -p "vm_select/$(dirname "$f")"; [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f"
-          done
+          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | grep -v '%' | grep -v '/$' | while read -r f; do
+            mkdir -p "vm_select/$(dirname "$f")" 2>/dev/null || continue
+            [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f" 2>/dev/null || true
+          done; true
           printf "[Machine]\nmachine = eduquest30\n" > vm_open/86box.cfg
           : > vm_select/86box.cfg
 
@@ -67,7 +68,7 @@ jobs:
           echo "::notice title=test2::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' t2.log)"
 
   windows:
-    runs-on: windows-2025
+    runs-on: windows-2022
     defaults:
       run:
         shell: msys2 {0}
@@ -76,13 +77,14 @@ jobs:
         with:
           msystem: UCRT64
           update: true
+          release: true
           pacboy: >-
-            gcc:p ninja:p cmake:p pkgconf:p gdb:p
-            freetype:p libpng:p SDL3:p openal:p rtmidi:p fluidsynth:p libslirp:p
-            zstd:p libsndfile:p qt5-base:p qt5-tools:p qt5-translations:p
+            ninja:p cmake:p gcc:p pkgconf:p freetype:p sdl3:p zlib:p libpng:p
+            openal:p rtmidi:p libslirp:p fluidsynth:p libserialport:p
+            qt5-static:p llvm-openmp:p zstd:p gdb:p
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=Debug -D QT=on -D DISCORD=off -D LIBRASHADER=off -D STATIC_BUILD=off
+        run: cmake -S . -B build --preset dev_debug -D QT=on
       - name: Build
         run: |
           set -o pipefail
@@ -93,9 +95,10 @@ jobs:
           fi
       - name: Prepare VMs
         run: |
-          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | while read -r f; do
-            mkdir -p "vm_select/$(dirname "$f")"; [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f"
-          done
+          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | grep -v '%' | grep -v '/$' | while read -r f; do
+            mkdir -p "vm_select/$(dirname "$f")" 2>/dev/null || continue
+            [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f" 2>/dev/null || true
+          done; true
           mkdir -p vm_open/roms/machines/eduquest30
           for f in A386_101_06A.BIN ROM_DOS_01.BIN ROM_DISK_01a.BIN; do head -c 131072 /dev/zero > vm_open/roms/machines/eduquest30/$f; done
           printf "[Machine]\nmachine = eduquest30\n" > vm_open/86box.cfg

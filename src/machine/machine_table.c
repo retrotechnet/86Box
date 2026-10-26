@@ -11300,6 +11300,56 @@ const machine_t machines[] = {
 
     /* Socket 3 machines */
     /* 486 machines with just the ISA slot */
+    /* IBM EduQuest Fifty-Five (Type 9615). VLSI VL82C483/VL82C114/VL82C003,
+       SMSC FDC37C665, on-board Cirrus Logic GD5434, Phoenix MultiKey KBC,
+       Intel flash BIOS. */
+    {
+        .name              = "[VLSI 82C480] IBM EduQuest Fifty-Five",
+        .internal_name     = "eduquest55",
+        .type              = MACHINE_TYPE_SOCKET3,
+        .chipset           = MACHINE_CHIPSET_VLSI_VL82C480,
+        .init              = machine_at_eduquest55_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET3,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 25000000,
+            .max_bus     = 33333333,
+            .min_voltage = 3300,
+            .max_voltage = 5000,
+            .min_multi   = 0,
+            .max_multi   = 0
+        },
+        .bus_flags = MACHINE_PS2,
+        .flags     = MACHINE_IDE | MACHINE_VIDEO,
+        .ram       = {
+            .min  = 4096,
+            .max  = 65536,
+            .step = 4096
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = &kbc_at_device,
+        .kbc_params               = KBC_VEN_PHOENIX | 0x00012900,
+        .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x00000cf0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = NULL,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = &gd5434_isa_device,
+        .snd_device               = NULL,
+        .net_device               = NULL,
+        .aliases                  = { "IBM 9615", "" }
+    },
     /* Uses some variant of Phoenix MultiKey/42 as the BIOS sends keyboard controller
        command C7 (OR input byte with received data byte). */
     {

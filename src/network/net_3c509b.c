@@ -370,6 +370,7 @@ typedef struct el3_t {
     uint32_t      prom_window; /* its size */
     uint32_t      prom_part;   /* the part's size as ROM SIZE names it */
     uint8_t       prom_paged;  /* the window shows the page ROM Control picks */
+    uint8_t       prom_image;  /* ISA: 0 TriROM, 1 BootWare NetWare (user option) */
 
     uint16_t fifo_diag;
     uint8_t  bist_ctl; /* FIFO Diagnostic's write-only BIST and BFC bits as last written */
@@ -2599,9 +2600,15 @@ el3_prom_load(el3_t *dev)
     if (dev->prom != NULL)
         return 1;
 
-    fp = rom_fopen(ROM_PATH_3C509B, "rb");
+    /* ISA cards can be given BootWare's NetWare (IPX) remote-reset PROM in
+       place of TriROM; the MCA boards have no such option. */
+    const char *path = ROM_PATH_3C509B;
+    if (!dev->mca && (dev->prom_image == 1))
+        path = ROM_PATH_3C509;
+
+    fp = rom_fopen(path, "rb");
     if (fp == NULL) {
-        el3_log("3C509B: no boot PROM image at %s\n", ROM_PATH_3C509B);
+        el3_log("3C509B: no boot PROM image at %s\n", path);
         return 0;
     }
     if ((fseek(fp, 0L, SEEK_END) != 0) || ((len = ftell(fp)) <= 0) || (fseek(fp, 0L, SEEK_SET) != 0)) {
@@ -2734,6 +2741,24 @@ el3_init(const device_t *info)
         el3_eeprom_build(dev, 0x300, 10);
         el3_eeprom_save(dev);
     }
+    /* Optional convenience: fit the 32 K BootWare PROM at the address the
+       user picked, the way 3C5X9CFG would - ROM SIZE 32 K (10b) and the
+       16 K-step ROM BASE that starts its window there (7-16, 7-18). */
+    if (!dev->mca) {
+        const uint32_t prom = (uint32_t) device_get_config_hex20("boot_prom");
+
+        dev->prom_image = (uint8_t) device_get_config_int("boot_prom_image");
+
+        if ((prom >= 0xc8000) && (prom <= 0xdc000) && !(prom & 0x3fff)) {
+            const uint16_t field = (uint16_t) (0x20 | ((((prom - 0xc0000) >> 14) << 1) & 0x0f));
+
+            if ((dev->eeprom[0x08] & AC_ROM) != (field << 8)) {
+                dev->eeprom[0x08] = (uint16_t) ((dev->eeprom[0x08] & ~AC_ROM) | (field << 8));
+                el3_eeprom_checksums(dev);
+                el3_eeprom_save(dev);
+            }
+        }
+    }
     /* The Plug and Play card before the power-up reset, which loads its
        registers with the EEPROM's configuration as every reset does. */
     if (!dev->mca) {
@@ -2790,6 +2815,43 @@ el3_close(void *priv)
 
 static const device_config_t el3_isa_config[] = {
     // clang-format off
+    {
+        .name           = "boot_prom",
+        .description    = "Boot PROM (BootWare)",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            /* Writes the EEPROM's ROM size/base as 3C5X9CFG would; Disabled
+               leaves whatever the EEPROM already holds. */
+            { .description = "Disabled (as set by 3C5X9CFG)", .value = 0x00000 },
+            { .description = "C800",                          .value = 0xc8000 },
+            { .description = "CC00",                          .value = 0xcc000 },
+            { .description = "D000",                          .value = 0xd0000 },
+            { .description = "D400",                          .value = 0xd4000 },
+            { .description = "D800",                          .value = 0xd8000 },
+            { .description = "DC00",                          .value = 0xdc000 },
+            { .description = ""                                                }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "boot_prom_image",
+        .description    = "Boot PROM image",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "3Com TriROM v1.70 (BootWare TCP/IP)",        .value = 0 },
+            { .description = "BootWare v1.00 (NetWare remote boot, IPX)",  .value = 1 },
+            { .description = ""                                                      }
+        },
+        .bios           = { { 0 } }
+    },
     {
         .name           = "board",
         .description    = "Model",

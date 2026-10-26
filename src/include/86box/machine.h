@@ -839,6 +839,9 @@ extern int             machine_at_sensation2_init(const machine_t *);
 /* ACC 2168 */
 extern int             machine_at_pb430_init(const machine_t *);
 
+/* VLSI 82C480 */
+extern int             machine_at_eduquest55_init(const machine_t *);
+
 /* ALi M1429G */
 extern int             machine_at_atc1762_init(const machine_t *);
 extern int             machine_at_ecsal486_init(const machine_t *);

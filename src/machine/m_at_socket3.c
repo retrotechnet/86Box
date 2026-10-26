@@ -48,6 +48,46 @@
 #include <86box/plat_unused.h>
 #include <86box/sound.h>
 
+/* VLSI 82C480 */
+/*
+ * IBM EduQuest Fifty-Five (Type 9615).
+ *
+ * Socket 3 486, VLSI VL82C480-family chipset (VL82C483/VL82C114/VL82C003),
+ * SMSC FDC37C665 Super I/O with IDE (the BIOS unlocks it with 55h,55h at 3F0h
+ * and programs CR0-CR4 and CRE), on-board Cirrus Logic GD5434 (the board's
+ * own customised video BIOS is not dumped; the generic GD5434 BIOS is used),
+ * PhoenixBIOS A486 1.01 05G in an Intel 28F001BX-T flash, Phoenix MultiKey KBC.
+ *
+ * ROM: roms/machines/eduquest55/BIOS_05G.BIN, the 128K image (BIOS.BIN) from
+ * IBM's EDUQ_05G flash update diskette.
+ */
+int
+machine_at_eduquest55_init(const machine_t *model)
+{
+    int ret;
+
+    ret = bios_load_linear("roms/machines/eduquest55/BIOS_05G.BIN",
+                           0x000e0000, 131072, 0);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init(model);
+
+    device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
+
+    device_add(&vl82c480_device);
+
+    device_add_params(&fdc37c6xx_device, (void *) (FDC37C665 | FDC37C6XX_IDE_PRI));
+
+    device_add(&intel_flash_bxt_device);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    return ret;
+}
+
 /* ACC 2168 */
 int
 machine_at_pb430_init(const machine_t *model)

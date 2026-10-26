@@ -695,6 +695,10 @@ load_machine(void)
 
     if (mem_size > machine_get_max_ram(machine))
         mem_size = machine_get_max_ram(machine);
+    /* A fresh VM gets the 64 KB default; machines such as the SCAMP-based
+       ones crash with less than their minimum, so clamp it here too. */
+    if (mem_size < machine_get_min_ram(machine))
+        mem_size = machine_get_min_ram(machine);
 
     cpu_use_dynarec = !!ini_section_get_int(cat, "cpu_use_dynarec", 0);
     fpu_softfloat = !!ini_section_get_int(cat, "fpu_softfloat", 0);

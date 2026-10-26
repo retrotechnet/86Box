@@ -808,7 +808,7 @@ main(int argc, char *argv[])
             });
         }
         if (qgetenv("EQ_ACCEPT").size())
-            QTimer::singleShot(4000, &settings, [&settings]() { fprintf(stderr, "EQTEST: accepting\n"); settings.accept(); });
+            QTimer::singleShot(4000, &settings, [&settings]() { fprintf(stderr, "EQTEST: accepting\n"); QMetaObject::invokeMethod(&settings, "accept"); });
         if (settings.exec() == QDialog::Accepted) {
             fprintf(stderr, "EQTEST: saving\n");
             settings.save(0);

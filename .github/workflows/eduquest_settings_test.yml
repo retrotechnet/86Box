@@ -40,6 +40,11 @@ jobs:
               head -c 131072 /dev/zero > $d/roms/machines/eduquest30/$f
             done
           done
+          # Placeholder files for every ROM path in the source, so every machine
+          # is "available" like with a full ROM set.
+          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | while read -r f; do
+            mkdir -p "vm_select/$(dirname "$f")"; [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f"
+          done
           printf "[Machine]\nmachine = eduquest30\n" > vm_open/86box.cfg
           : > vm_select/86box.cfg
 
@@ -60,3 +65,54 @@ jobs:
           echo "---- saved config ----" >> t2.log; cat vm_select/86box.cfg >> t2.log || true
           cat t2.log
           echo "::notice title=test2::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' t2.log)"
+
+  windows:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          pacboy: >-
+            gcc:p ninja:p cmake:p pkgconf:p gdb:p
+            freetype:p libpng:p SDL3:p openal:p rtmidi:p fluidsynth:p libslirp:p
+            zstd:p libsndfile:p qt5-base:p qt5-tools:p qt5-translations:p
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=Debug -D QT=on -D DISCORD=off -D LIBRASHADER=off -D STATIC_BUILD=off
+      - name: Build
+        run: |
+          set -o pipefail
+          if ! cmake --build build 2>&1 | tee build.log; then
+            msg=$(grep -E "error|FAILED" build.log | head -40 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=winbuild::$msg"
+            exit 1
+          fi
+      - name: Prepare VMs
+        run: |
+          grep -rhoE '"roms/[^"]+"' src | tr -d '"' | sort -u | while read -r f; do
+            mkdir -p "vm_select/$(dirname "$f")"; [ -e "vm_select/$f" ] || head -c 131072 /dev/zero > "vm_select/$f"
+          done
+          mkdir -p vm_open/roms/machines/eduquest30
+          for f in A386_101_06A.BIN ROM_DOS_01.BIN ROM_DISK_01a.BIN; do head -c 131072 /dev/zero > vm_open/roms/machines/eduquest30/$f; done
+          printf "[Machine]\nmachine = eduquest30\n" > vm_open/86box.cfg
+          : > vm_select/86box.cfg
+      - name: "Win test 1: open Settings with EduQuest, OK"
+        continue-on-error: true
+        run: |
+          EQ_ACCEPT=1 QT_QPA_PLATFORM=offscreen timeout 300 gdb -q -batch -ex run -ex bt \
+            --args build/src/86Box.exe -S -N -P "$(cygpath -w $PWD/vm_open)" -R "$(cygpath -w $PWD/vm_open/roms)" 2>&1 | grep -v "^\[New Thread\|^\[Thread" | tail -60 > w1.log
+          echo "---- saved config ----" >> w1.log; cat vm_open/86box.cfg >> w1.log || true
+          cat w1.log
+          echo "::notice title=win1::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' w1.log)"
+      - name: "Win test 2: fresh VM, select EduQuest, OK"
+        continue-on-error: true
+        run: |
+          EQ_SELECT=eduquest30 EQ_ACCEPT=1 QT_QPA_PLATFORM=offscreen timeout 300 gdb -q -batch -ex run -ex bt \
+            --args build/src/86Box.exe -S -N -P "$(cygpath -w $PWD/vm_select)" -R "$(cygpath -w $PWD/vm_select/roms)" 2>&1 | grep -v "^\[New Thread\|^\[Thread" | tail -60 > w2.log
+          echo "---- saved config ----" >> w2.log; cat vm_select/86box.cfg >> w2.log || true
+          cat w2.log
+          echo "::notice title=win2::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' w2.log)"

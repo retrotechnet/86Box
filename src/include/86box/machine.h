@@ -657,6 +657,7 @@ extern const device_t  dells333sl_device;
 #endif
 extern int             machine_at_dells333sl_init(const machine_t *);
 extern int             machine_at_spc6033p_init(const machine_t *);
+extern int             machine_at_eduquest30_init(const machine_t *);
 
 /* SCATsx */
 extern int             machine_at_kmxc02_init(const machine_t *);

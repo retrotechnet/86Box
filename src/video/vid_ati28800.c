@@ -36,7 +36,8 @@
 
 enum {
     VGAWONDERXL = 1,
-    VGAWONDERXLPLUS
+    VGAWONDERXLPLUS,
+    VGAWONDER_ONBOARD_NOBIOS /* BIOS lives in the system ROM, mapped by the machine */
 #ifdef USE_XL24
     ,
     VGAWONDERXL24
@@ -656,6 +657,10 @@ ati28800_init(const device_t *info)
             ati28800->memory = 1024;
             break;
 
+        case VGAWONDER_ONBOARD_NOBIOS:
+            ati28800->id = 5;
+            break;
+
 #ifdef USE_XL24
         case VGAWONDERXL24:
             ati28800->id = 6;
@@ -702,6 +707,10 @@ ati28800_init(const device_t *info)
 
         case VGAWONDERXLPLUS:
             ati_eeprom_load(&ati28800->eeprom, "ati28800_wonder1024d_xl_plus.nvr", 0);
+            break;
+
+        case VGAWONDER_ONBOARD_NOBIOS:
+            ati_eeprom_load(&ati28800->eeprom, "ati28800_eduquest.nvr", 0);
             break;
 
 #ifdef USE_XL24
@@ -916,6 +925,21 @@ const device_t ati28800k_spc6033p_device = {
     .force_redraw  = ati28800_force_redraw,
     .machine       = "Samsung SPC-6033P",
     .config        = NULL
+};
+
+const device_t ati28800_onboard_eduquest_device = {
+    .name          = "ATI 28800 On-Board (IBM EduQuest)",
+    .internal_name = "ati28800_onboard_eduquest",
+    .flags         = DEVICE_ISA,
+    .local         = VGAWONDER_ONBOARD_NOBIOS,
+    .init          = ati28800_init,
+    .close         = ati28800_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = ati28800_speed_changed,
+    .force_redraw  = ati28800_force_redraw,
+    .machine       = "IBM EduQuest Thirty",
+    .config        = ati28800_config
 };
 
 const device_t ati28800_wonder1024d_xl_plus_device = {

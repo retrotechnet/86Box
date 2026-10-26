@@ -157,6 +157,12 @@ typedef struct atkbc_t {
 
     void (*p2_write_hook)(void *priv, uint8_t old_p2, uint8_t new_p2);
     void *p2_priv;
+
+    /* Extra output port driven by Phoenix commands C3h/C4h on some
+       OEM firmware (IBM EduQuest: ROM DOS / ROM disk bank select). */
+    uint8_t p3;
+    void (*p3_write_hook)(void *priv, uint8_t old_p3, uint8_t new_p3);
+    void *p3_priv;
 } atkbc_t;
 
 /* Keyboard controller ports. */
@@ -1855,6 +1861,23 @@ write_cmd_data_phoenix(void *priv, uint8_t val)
             ret = 0;
             break;
 
+        case 0xc3: /* Set Port3 bits (OEM) */
+        case 0xc4: /* Clear Port3 bits (OEM) */
+            if (dev->p3_write_hook != NULL) {
+                uint8_t old_p3 = dev->p3;
+
+                kbc_at_log("ATkbc: Phoenix - %s Port3 bits %02X\n",
+                           (dev->command == 0xc3) ? "Set" : "Clear", val);
+                if (dev->command == 0xc3)
+                    dev->p3 |= val;
+                else
+                    dev->p3 &= ~val;
+                dev->p3_write_hook(dev->p3_priv, old_p3, dev->p3);
+                dev->command_phase = 0;
+                ret = 0;
+            }
+            break;
+
         case 0xc7: /* Set Port1 bits */
             kbc_at_log("ATkbc: Phoenix - Set Port1 bits\n");
             dev->p1           |= val;
@@ -1973,6 +1996,16 @@ write_cmd_phoenix(void *priv, uint8_t val)
             dev->wantdata = 1;
             dev->state    = STATE_KBC_PARAM;
             ret = 0;
+            break;
+
+        case 0xc3: /* Set Port3 bits (OEM) */
+        case 0xc4: /* Clear Port3 bits (OEM) */
+            if (dev->p3_write_hook != NULL) {
+                kbc_at_log("ATkbc: Phoenix - %s Port3 bits\n", (val == 0xc3) ? "Set" : "Clear");
+                dev->wantdata  = 1;
+                dev->state     = STATE_KBC_PARAM;
+                ret = 0;
+            }
             break;
 
         case 0xc7: /* Set Port1 bits */
@@ -2983,6 +3016,19 @@ kbc_at_set_p2_write_hook(void *priv,
 
     dev->p2_write_hook = p2_write_hook;
     dev->p2_priv       = p2_priv;
+}
+
+void
+kbc_at_set_p3_write_hook(void *priv,
+                         void (*p3_write_hook)(void *priv, uint8_t old_p3,
+                                               uint8_t new_p3),
+                         void *p3_priv, uint8_t p3)
+{
+    atkbc_t *dev = (atkbc_t *) priv;
+
+    dev->p3            = p3;
+    dev->p3_write_hook = p3_write_hook;
+    dev->p3_priv       = p3_priv;
 }
 
 static void *

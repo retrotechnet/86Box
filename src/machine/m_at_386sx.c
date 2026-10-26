@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 #define HAVE_STDARG_H
@@ -43,6 +44,7 @@
 #include <86box/flash.h>
 #include <86box/machine.h>
 #include <86box/sound.h>
+#include <86box/plat_unused.h>
 
 /* ISA */
 /*
@@ -755,6 +757,165 @@ machine_at_dells333sl_init(const machine_t *model)
 
     device_add_params(&pc873xx_device, (void *) (PCX73XX_IDE_PRI | PCX730X_26E));
     device_add(&vl82c113_device); /* The keyboard controller is part of the VL82c113. */
+
+    device_add(&vlsi_scamp_device);
+
+    return ret;
+}
+
+/*
+ * IBM EduQuest Thirty (Type 9603).
+ *
+ * IBM 386SLC, VLSI SCAMP (82C311), NS PC87310, on-board ATI 28800,
+ * PhoenixBIOS A386 1.01 with a Phoenix MultiKey keyboard controller.
+ *
+ * The 128K system ROM (U32) holds the ATI VGA BIOS and a network boot
+ * ROM in its lower 64K (decoded at C0000) and the system BIOS in its
+ * upper 64K (F0000).
+ *
+ * ROM DOS (U33) and the ROM disk (U47) are paged into E0000-EFFFF in 64K
+ * banks. The bank is selected through two KBC output lines driven by the
+ * OEM Phoenix commands C3h (set bits) and C4h (clear bits):
+ *   bits 4:3 = 00 ROM DOS 0-64K, 01 ROM DOS 64-128K,
+ *              10 ROM disk 0-64K, 11 ROM disk 64-128K.
+ */
+#define EDUQUEST30_BIOS "roms/machines/eduquest30/A386_101_06A.BIN"
+#define EDUQUEST30_DOS  "roms/machines/eduquest30/ROM_DOS_01.BIN"
+#define EDUQUEST30_DISK "roms/machines/eduquest30/ROM_DISK_01a.BIN"
+
+typedef struct eduquest_t {
+    uint8_t       bank;
+    uint8_t      *rom_data; /* 4 x 64K: DOS lo, DOS hi, disk lo, disk hi */
+    mem_mapping_t bank_mapping;
+    mem_mapping_t bios_lo_mapping;
+} eduquest_t;
+
+static uint8_t
+eduquest_bank_read(uint32_t addr, void *priv)
+{
+    const eduquest_t *dev = (eduquest_t *) priv;
+
+    return dev->rom_data[(dev->bank << 16) | (addr & 0xffff)];
+}
+
+static uint16_t
+eduquest_bank_readw(uint32_t addr, void *priv)
+{
+    return eduquest_bank_read(addr, priv) | (eduquest_bank_read(addr + 1, priv) << 8);
+}
+
+static uint32_t
+eduquest_bank_readl(uint32_t addr, void *priv)
+{
+    return eduquest_bank_readw(addr, priv) | (eduquest_bank_readw(addr + 2, priv) << 16);
+}
+
+static uint8_t
+eduquest_bios_lo_read(uint32_t addr, UNUSED(void *priv))
+{
+    return rom[addr & 0xffff];
+}
+
+static uint16_t
+eduquest_bios_lo_readw(uint32_t addr, void *priv)
+{
+    return eduquest_bios_lo_read(addr, priv) | (eduquest_bios_lo_read(addr + 1, priv) << 8);
+}
+
+static uint32_t
+eduquest_bios_lo_readl(uint32_t addr, void *priv)
+{
+    return eduquest_bios_lo_readw(addr, priv) | (eduquest_bios_lo_readw(addr + 2, priv) << 16);
+}
+
+static void
+eduquest_p3_write(void *priv, UNUSED(uint8_t old_p3), uint8_t new_p3)
+{
+    eduquest_t *dev = (eduquest_t *) priv;
+
+    dev->bank = (new_p3 >> 3) & 0x03;
+    mem_mapping_set_exec(&dev->bank_mapping, &dev->rom_data[dev->bank << 16]);
+    flushmmucache_nopc();
+}
+
+static void
+eduquest_close(void *priv)
+{
+    eduquest_t *dev = (eduquest_t *) priv;
+
+    free(dev->rom_data);
+    free(dev);
+}
+
+static void *
+eduquest_init(UNUSED(const device_t *info))
+{
+    eduquest_t *dev = (eduquest_t *) calloc(1, sizeof(eduquest_t));
+
+    dev->rom_data = (uint8_t *) malloc(0x40000);
+    memset(dev->rom_data, 0xff, 0x40000);
+    rom_load_linear(EDUQUEST30_DOS,  0x00000, 0x20000, 0, dev->rom_data);
+    rom_load_linear(EDUQUEST30_DISK, 0x20000, 0x20000, 0, dev->rom_data);
+
+    /* Banked ROM DOS / ROM disk window, decoded on the external bus. */
+    mem_mapping_add(&dev->bank_mapping, 0xe0000, 0x10000,
+                    eduquest_bank_read, eduquest_bank_readw, eduquest_bank_readl,
+                    NULL, NULL, NULL,
+                    dev->rom_data, MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM, dev);
+
+    /* Lower half of the system ROM (ATI VGA BIOS + network boot ROM).
+       The BIOS sets SCAMP's ROMMOV so that ROMCS only covers F0000;
+       the board's own decode puts this half at C0000 on the bus. */
+    mem_mapping_add(&dev->bios_lo_mapping, 0xc0000, 0x10000,
+                    eduquest_bios_lo_read, eduquest_bios_lo_readw, eduquest_bios_lo_readl,
+                    NULL, NULL, NULL,
+                    rom, MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM, dev);
+
+    return dev;
+}
+
+static const device_t eduquest_device = {
+    .name          = "IBM EduQuest ROM DOS/ROM Disk",
+    .internal_name = "eduquest_rom",
+    .flags         = 0,
+    .local         = 0,
+    .init          = eduquest_init,
+    .close         = eduquest_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+int
+machine_at_eduquest30_init(const machine_t *model)
+{
+    eduquest_t *dev;
+    void       *kbc;
+    int         ret;
+
+    /* The 128K system ROM spans E0000-FFFFF in the BIOS mapping; SCAMP
+       decides whether E0000 shows it (ROMCS) or the ROM DOS window. */
+    ret = bios_load_linear(EDUQUEST30_BIOS, 0x000e0000, 131072, 0);
+
+    if (bios_only)
+        return ret && rom_present(EDUQUEST30_DOS) && rom_present(EDUQUEST30_DISK);
+
+    if (!ret)
+        return ret;
+
+    machine_at_common_init(model);
+
+    dev = device_add(&eduquest_device);
+
+    kbc = device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
+    kbc_at_set_p3_write_hook(kbc, eduquest_p3_write, dev, 0x04);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    device_add_params(&pc87310_device, (void *) PCX73XX_IDE);
 
     device_add(&vlsi_scamp_device);
 

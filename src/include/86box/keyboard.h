@@ -256,6 +256,11 @@ extern void         kbc_at_set_p2_write_hook(void *priv,
                                                                    uint8_t old_p2,
                                                                    uint8_t new_p2),
                                              void *p2_priv);
+extern void         kbc_at_set_p3_write_hook(void *priv,
+                                             void (*p3_write_hook)(void *priv,
+                                                                   uint8_t old_p3,
+                                                                   uint8_t new_p3),
+                                             void *p3_priv, uint8_t p3);
 
 extern void         kbc_at_dev_queue_reset(atkbc_dev_t *dev, uint8_t reset_main);
 extern uint8_t      kbc_at_dev_queue_pos(atkbc_dev_t *dev, uint8_t main);

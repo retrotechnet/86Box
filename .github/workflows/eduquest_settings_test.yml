@@ -1,0 +1,52 @@
+name: EduQuest settings crash test (temporary)
+
+on:
+  push:
+    branches: [ ci-eduquest-debug ]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install dependencies
+        run: >-
+          sudo apt update && sudo apt install -y
+          build-essential ninja-build gdb xvfb
+          libfreetype-dev libgles2-mesa-dev libsdl2-dev libpng-dev
+          librtmidi-dev libopenal-dev libslirp-dev libfluidsynth-dev
+          libvdeplug-dev libserialport-dev libzstd-dev libsndfile1-dev
+          qtbase5-dev qtbase5-private-dev qttools5-dev qttranslations5-l10n
+          libevdev-dev libxkbcommon-x11-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -D CMAKE_BUILD_TYPE=Debug -D QT=on -D USE_QT6=off -D SDL2=on -D DISCORD=off -D LIBRASHADER=off
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Prepare VMs (placeholder ROM files only)
+        run: |
+          for d in vm_open vm_select; do
+            mkdir -p $d/roms/machines/eduquest30
+            for f in A386_101_06A.BIN ROM_DOS_01.BIN ROM_DISK_01a.BIN; do
+              head -c 131072 /dev/zero > $d/roms/machines/eduquest30/$f
+            done
+          done
+          printf "[Machine]\nmachine = eduquest30\n" > vm_open/86box.cfg
+          : > vm_select/86box.cfg
+
+      - name: "Test 1: open Settings with EduQuest already selected, then OK"
+        continue-on-error: true
+        run: |
+          EQ_ACCEPT=1 QT_QPA_PLATFORM=offscreen timeout 300 gdb -q -batch -ex run -ex bt -ex "thread apply all bt 8" \
+            --args build/src/86Box -S -N -P "$PWD/vm_open" -R "$PWD/vm_open/roms" 2>&1 | grep -v "^\[New Thread\|^\[Thread" | tail -120
+          echo "---- saved config ----"; cat vm_open/86box.cfg || true
+
+      - name: "Test 2: fresh VM, select EduQuest in Settings, then OK (VM manager flow)"
+        continue-on-error: true
+        run: |
+          EQ_SELECT=eduquest30 EQ_ACCEPT=1 QT_QPA_PLATFORM=offscreen timeout 300 gdb -q -batch -ex run -ex bt -ex "thread apply all bt 8" \
+            --args build/src/86Box -S -N -P "$PWD/vm_select" -R "$PWD/vm_select/roms" 2>&1 | grep -v "^\[New Thread\|^\[Thread" | tail -120
+          echo "---- saved config ----"; cat vm_select/86box.cfg || true

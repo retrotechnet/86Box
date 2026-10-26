@@ -22,6 +22,7 @@
 #include <QElapsedTimer>
 #include <QThread>
 #include <QTimer>
+#include <QComboBox>
 #include <QTranslator>
 #include <QDirIterator>
 #include <QLibraryInfo>
@@ -54,6 +55,7 @@ Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin)
 
 extern "C" {
 #include <86box/86box.h>
+#include <86box/machine.h>
 #include <86box/config.h>
 #include <86box/plat.h>
 #include <86box/ui.h>
@@ -791,7 +793,24 @@ main(int argc, char *argv[])
             manager_socket.clientRunningStateChanged(VMManagerProtocol::RunningState::PausedWaiting);
         }
         Settings settings;
+        /* CI-only test hook (branch ci-eduquest-debug, not for merging). */
+        if (qgetenv("EQ_SELECT").size()) {
+            QTimer::singleShot(1500, &settings, [&settings]() {
+                auto *cb = settings.findChild<QComboBox *>("comboBoxMachine");
+                int   id = machine_get_machine_from_internal_name(qgetenv("EQ_SELECT").constData());
+                fprintf(stderr, "EQTEST: combo=%p target machine id=%d\n", (void *) cb, id);
+                if (cb) {
+                    int idx = cb->findData(id);
+                    fprintf(stderr, "EQTEST: selecting combo index %d\n", idx);
+                    cb->setCurrentIndex(idx);
+                    fprintf(stderr, "EQTEST: selected\n");
+                }
+            });
+        }
+        if (qgetenv("EQ_ACCEPT").size())
+            QTimer::singleShot(4000, &settings, [&settings]() { fprintf(stderr, "EQTEST: accepting\n"); settings.accept(); });
         if (settings.exec() == QDialog::Accepted) {
+            fprintf(stderr, "EQTEST: saving\n");
             settings.save(0);
             config_save();
         }

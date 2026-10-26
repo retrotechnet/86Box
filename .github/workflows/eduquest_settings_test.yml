@@ -19,7 +19,7 @@ jobs:
           pacboy: >-
             ninja:p cmake:p gcc:p pkgconf:p freetype:p sdl3:p zlib:p libpng:p
             openal:p rtmidi:p libslirp:p fluidsynth:p libserialport:p
-            qt5-static:p llvm-openmp:p zstd:p gdb:p
+            qt5-static:p vulkan-headers:p llvm-openmp:p zstd:p gdb:p
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

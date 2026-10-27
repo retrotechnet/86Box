@@ -61,6 +61,64 @@
  * ROM: roms/machines/eduquest55/BIOS_05G.BIN, the 128K image (BIOS.BIN) from
  * IBM's EDUQ_05G flash update diskette.
  */
+/*
+ * The board's Setup is not in the flash: F2 far-calls E000:0100 with ROMCS
+ * moved off the flash (VL82C480 RAMMAP ROMMOV), i.e. into a separate mask
+ * ROM (U13 "ROM BIOS") that has not been dumped. Without Setup nothing ever
+ * writes a valid configuration, so the BIOS reports 174-B and lists no boot
+ * devices. When the CMOS configuration checksum is bad, write what Setup
+ * would: standard AT configuration bytes plus the IBM fields the BIOS reads
+ * (29h boot order, 2 bits per entry: 1 diskette, 2 fixed disk, 3 network;
+ * 41h bit 7 "built-in monitor off").
+ */
+static uint8_t
+eduquest55_cmos_read(uint8_t idx)
+{
+    outb(0x70, idx | 0x80);
+    return inb(0x71);
+}
+
+static void
+eduquest55_cmos_write(uint8_t idx, uint8_t val)
+{
+    outb(0x70, idx | 0x80);
+    outb(0x71, val);
+}
+
+static void
+eduquest55_cmos_defaults(void)
+{
+    uint16_t sum = 0;
+    uint32_t ext = (mem_size > 1024) ? (mem_size - 1024) : 0;
+
+    for (uint8_t i = 0x10; i <= 0x2d; i++)
+        sum += eduquest55_cmos_read(i);
+    if (sum == ((eduquest55_cmos_read(0x2e) << 8) | eduquest55_cmos_read(0x2f)))
+        return;
+
+    if (ext > 0xffff)
+        ext = 0xffff;
+
+    for (uint8_t i = 0x10; i <= 0x2d; i++)
+        eduquest55_cmos_write(i, 0x00);
+    eduquest55_cmos_write(0x10, 0x40);                          /* A: 1.44M, B: none */
+    eduquest55_cmos_write(0x14, 0x01 | (hasfpu ? 0x02 : 0x00)); /* 1 diskette, VGA */
+    eduquest55_cmos_write(0x15, 0x80);                          /* 640K base */
+    eduquest55_cmos_write(0x16, 0x02);
+    eduquest55_cmos_write(0x17, ext & 0xff);
+    eduquest55_cmos_write(0x18, ext >> 8);
+    eduquest55_cmos_write(0x29, 0x01 | (0x02 << 2) | (0x03 << 4)); /* diskette, disk, network */
+
+    sum = 0;
+    for (uint8_t i = 0x10; i <= 0x2d; i++)
+        sum += eduquest55_cmos_read(i);
+    eduquest55_cmos_write(0x2e, sum >> 8);
+    eduquest55_cmos_write(0x2f, sum & 0xff);
+
+    eduquest55_cmos_write(0x41, eduquest55_cmos_read(0x41) & 0x7f); /* built-in monitor on */
+    eduquest55_cmos_write(0x0e, 0x00);
+}
+
 int
 machine_at_eduquest55_init(const machine_t *model)
 {
@@ -78,12 +136,16 @@ machine_at_eduquest55_init(const machine_t *model)
 
     device_add(&vl82c480_device);
 
+    /* The FDC37C665 only decodes the IDE ports; the controller is the board's. */
+    device_add(&ide_isa_device);
     device_add_params(&fdc37c6xx_device, (void *) (FDC37C665 | FDC37C6XX_IDE_PRI));
 
     device_add(&intel_flash_bxt_device);
 
     if (gfxcard[0] == VID_INTERNAL)
         device_add(machine_get_vid_device(machine));
+
+    eduquest55_cmos_defaults();
 
     return ret;
 }
